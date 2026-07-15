@@ -54,9 +54,9 @@ class MotorBusqueda:
                     id,
                     tipo,
                     titulo,
-                    contenido,
+                    texto_contenido,
                     etiquetas,
-                    contenido='entradas',
+                    content='entradas',
                     content_rowid='rowid'
                 )
             """)
@@ -64,23 +64,23 @@ class MotorBusqueda:
             # Triggers para mantener FTS sincronizado
             conn.execute("""
                 CREATE TRIGGER IF NOT EXISTS entradas_ai AFTER INSERT ON entradas BEGIN
-                    INSERT INTO entradas_fts(rowid, id, tipo, titulo, contenido, etiquetas)
+                    INSERT INTO entradas_fts(rowid, id, tipo, titulo, texto_contenido, etiquetas)
                     VALUES (new.rowid, new.id, new.tipo, new.titulo, new.contenido, new.etiquetas);
                 END
             """)
 
             conn.execute("""
                 CREATE TRIGGER IF NOT EXISTS entradas_ad AFTER DELETE ON entradas BEGIN
-                    INSERT INTO entradas_fts(entradas_fts, rowid, id, tipo, titulo, contenido, etiquetas)
+                    INSERT INTO entradas_fts(entradas_fts, rowid, id, tipo, titulo, texto_contenido, etiquetas)
                     VALUES ('delete', old.rowid, old.id, old.tipo, old.titulo, old.contenido, old.etiquetas);
                 END
             """)
 
             conn.execute("""
                 CREATE TRIGGER IF NOT EXISTS entradas_au AFTER UPDATE ON entradas BEGIN
-                    INSERT INTO entradas_fts(entradas_fts, rowid, id, tipo, titulo, contenido, etiquetas)
+                    INSERT INTO entradas_fts(entradas_fts, rowid, id, tipo, titulo, texto_contenido, etiquetas)
                     VALUES ('delete', old.rowid, old.id, old.tipo, old.titulo, old.contenido, old.etiquetas);
-                    INSERT INTO entradas_fts(rowid, id, tipo, titulo, contenido, etiquetas)
+                    INSERT INTO entradas_fts(rowid, id, tipo, titulo, texto_contenido, etiquetas)
                     VALUES (new.rowid, new.id, new.tipo, new.titulo, new.contenido, new.etiquetas);
                 END
             """)

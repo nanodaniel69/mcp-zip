@@ -18,7 +18,6 @@ from mcp_zip.herramientas import (
 def setup_temp_dir(tmp_path):
     """Configura un directorio temporal para cada test."""
     configuracion.config.root = tmp_path / ".memoria"
-    configuracion.config.proyectos_dir = configuracion.config.root / "proyectos"
     configuracion.config.proyectos_dir.mkdir(parents=True, exist_ok=True)
     yield
 
