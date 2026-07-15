@@ -21,7 +21,7 @@ from .herramientas import (
 # Crear servidor MCP
 mcp = FastMCP(
     "mcp-zip",
-    description="Memoria comprimida para agentes de IA. Ahorra tokens, evita alucinaciones.",
+    instructions="Memoria comprimida para agentes de IA. Ahorra tokens, evita alucinaciones.",
 )
 
 # Registrar herramientas
