@@ -16,6 +16,11 @@ from .herramientas import (
     memoria_archivar,
     memoria_importar,
     memoria_exportar,
+    memoria_estadisticas,
+    memoria_sincronizar,
+    memoria_exportar_zip,
+    memoria_importar_zip,
+    memoria_listar_zip,
 )
 
 # Crear servidor MCP
@@ -34,6 +39,11 @@ mcp.tool()(memoria_listar)
 mcp.tool()(memoria_archivar)
 mcp.tool()(memoria_importar)
 mcp.tool()(memoria_exportar)
+mcp.tool()(memoria_estadisticas)
+mcp.tool()(memoria_sincronizar)
+mcp.tool()(memoria_exportar_zip)
+mcp.tool()(memoria_importar_zip)
+mcp.tool()(memoria_listar_zip)
 
 
 def main():

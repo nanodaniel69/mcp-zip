@@ -1,6 +1,9 @@
 """Herramientas MCP para mcp-zip."""
 
+import json
+from pathlib import Path
 from typing import Optional
+from .configuracion import config
 from .formateador import Entrada, generar_id
 from .almacenamiento import (
     crear_proyecto,
@@ -335,3 +338,267 @@ def memoria_exportar(nombre: str, tipo_archivo: str = "resumen") -> str:
         Contenido del archivo para copiar/guardar
     """
     return memoria_leer(nombre, tipo_archivo)
+
+
+def memoria_estadisticas(nombre: str) -> str:
+    """Métricas de uso y ahorro de tokens.
+
+    Args:
+        nombre: Nombre del proyecto
+
+    Returns:
+        Estadísticas detalladas del proyecto
+    """
+    if not proyecto_existe(nombre):
+        return f"❌ Proyecto '{nombre}' no existe."
+
+    import os
+    from datetime import datetime
+    from .almacenamiento import ARCHIVOS_ESTANDAR
+    from .almacenamiento_json import estadisticas_json
+
+    # 1. Contar entradas desde SQLite
+    motor = MotorBusqueda(nombre)
+    stats_db = motor.estadisticas()
+
+    # 2. Calcular tamaño de archivos
+    proyecto_dir = config.proyecto_dir(nombre)
+    tamanho_md = 0
+    tamanho_json = 0
+    archivos_md = 0
+    archivos_json = 0
+
+    for tipo in ARCHIVOS_ESTANDAR:
+        md_path = proyecto_dir / ARCHIVOS_ESTANDAR[tipo]
+        json_path = proyecto_dir / ARCHIVOS_ESTANDAR[tipo].replace(".md", ".json")
+
+        if md_path.exists():
+            tamanho_md += md_path.stat().st_size
+            archivos_md += 1
+        if json_path.exists():
+            tamanho_json += json_path.stat().st_size
+            archivos_json += 1
+
+    # SQLite size
+    db_path = config.db_path(nombre)
+    tamanho_db = db_path.stat().st_size if db_path.exists() else 0
+
+    tamanho_total = tamanho_md + tamanho_json + tamanho_db
+
+    # 3. Estimar tokens (aprox 4 tokens por palabra, ~5 chars por palabra)
+    tokens_md = tamanho_md // 5 * 4  # tokens en .md
+    tokens_json = tamanho_json // 5 * 4  # tokens en .json
+
+    # 4. Estimar ahorro
+    # Sin mcp-zip: leer todos los .md = tokens_md
+    # Con mcp-zip: buscar (~700) + resumen (~500) = ~1,200 por sesión
+    ahorro_por_sesion = tokens_md - 1200 if tokens_md > 1200 else 0
+    porcentaje_ahorro = (ahorro_por_sesion / tokens_md * 100) if tokens_md > 0 else 0
+
+    # 5. Construir salida
+    salida = f"📊 **Estadísticas de '{nombre}':**\n\n"
+    salida += f"**Entradas:**\n"
+    salida += f"- Total: {stats_db['total']}"
+    if stats_db['por_tipo']:
+        tipos = ", ".join(f"{k}: {v}" for k, v in stats_db['por_tipo'].items())
+        salida += f" ({tipos})"
+    salida += f"\n"
+    salida += f"- Activas: {stats_db['activos']} | Archivadas: {stats_db['archivados']}\n\n"
+
+    salida += f"**Archivos:**\n"
+    salida += f"- .md: {archivos_md} archivos ({tamanho_md // 1024} KB)\n"
+    salida += f"- .json: {archivos_json} archivos ({tamanho_json // 1024} KB)\n"
+    salida += f"- .db: 1 archivo ({tamanho_db // 1024} KB)\n"
+    salida += f"- Total: {tamanho_total // 1024} KB\n\n"
+
+    salida += f"**Tokens estimados:**\n"
+    salida += f"- En .md: ~{tokens_md:,} tokens\n"
+    salida += f"- En .json: ~{tokens_json:,} tokens\n\n"
+
+    salida += f"**💰 Ahorro estimado:**\n"
+    if ahorro_por_sesion > 0:
+        salida += f"- Sin mcp-zip: ~{tokens_md:,} tokens/sesión\n"
+        salida += f"- Con mcp-zip:  ~1,200 tokens/sesión\n"
+        salida += f"- Ahorro:       {porcentaje_ahorro:.0f}% ({ahorro_por_sesion:,} tokens/sesión)\n"
+    else:
+        salida += f"- Proyecto pequeño, ahorro mínimo\n"
+
+    return salida
+
+
+def memoria_sincronizar() -> str:
+    """Sincroniza todos los proyectos (JSON + SQLite)."""
+    from .almacenamiento import ARCHIVOS_ESTANDAR
+    from .almacenamiento_json import sincronizar_todos
+
+    proyectos = listar_proyectos()
+    if not proyectos:
+        return "📂 No hay proyectos para sincronizar."
+
+    salida = "🔄 **Sincronizando todos los proyectos...**\n\n"
+
+    total_entradas = 0
+    for p in proyectos:
+        nombre = p["nombre"]
+        salida += f"**{nombre}:**\n"
+
+        # Sincronizar JSON desde .md
+        try:
+            sincronizar_todos(nombre)
+            salida += f"  ✅ JSON sincronizado ({p['archivos']} archivos)\n"
+        except Exception as e:
+            salida += f"  ❌ Error sincronizando JSON: {e}\n"
+
+        # Reconstruir SQLite
+        try:
+            motor = MotorBusqueda(nombre)
+            # Re-indexar todas las entradas
+            for tipo in ARCHIVOS_ESTANDAR:
+                entradas = leer_entradas(nombre, tipo)
+                for entrada in entradas:
+                    motor.indexar_entrada(entrada)
+            total_entradas += motor.estadisticas()["total"]
+            salida += f"  ✅ SQLite reconstruido ({motor.estadisticas()['total']} entradas)\n"
+        except Exception as e:
+            salida += f"  ❌ Error reconstruyendo SQLite: {e}\n"
+
+        salida += "\n"
+
+    salida += f"**📊 Global:**\n"
+    salida += f"- Proyectos: {len(proyectos)}\n"
+    salida += f"- Entradas totales: {total_entradas}\n"
+
+    return salida
+
+
+def memoria_exportar_zip(nombre: str) -> str:
+    """Exporta un proyecto completo a formato .mcp-zip.
+
+    Args:
+        nombre: Nombre del proyecto
+
+    Returns:
+        Ruta del archivo .mcp-zip generado
+    """
+    import zipfile
+    from datetime import datetime
+
+    if not proyecto_existe(nombre):
+        return f"❌ Proyecto '{nombre}' no existe."
+
+    proyecto_dir = config.proyecto_dir(nombre)
+    zip_path = proyecto_dir.parent / f"{nombre}.mcp-zip"
+
+    metadata = {
+        "nombre": nombre,
+        "version": "0.1.0",
+        "fecha_exportacion": datetime.now().isoformat(),
+        "archivos": [],
+    }
+
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        # Agregar archivos .md y .json
+        for archivo in sorted(proyecto_dir.rglob("*")):
+            if archivo.is_file() and archivo.suffix in (".md", ".json"):
+                rel_path = str(archivo.relative_to(proyecto_dir))
+                zf.write(archivo, rel_path)
+                metadata["archivos"].append(rel_path)
+
+        # Agregar metadata
+        zf.writestr("metadata.json", json.dumps(metadata, indent=2, ensure_ascii=False))
+
+    tamanho_kb = zip_path.stat().st_size // 1024
+    return f"📦 {nombre}.mcp-zip exportado ({tamanho_kb} KB, {len(metadata['archivos'])} archivos)"
+
+
+def memoria_importar_zip(ruta_zip: str) -> str:
+    """Importa un proyecto desde formato .mcp-zip.
+
+    Args:
+        ruta_zip: Ruta al archivo .mcp-zip
+
+    Returns:
+        Mensaje de confirmación
+    """
+    import zipfile
+
+    ruta = Path(ruta_zip)
+    if not ruta.exists():
+        return f"❌ Archivo no encontrado: {ruta_zip}"
+
+    if not ruta_zip.endswith(".mcp-zip"):
+        return f"❌ No es un archivo .mcp-zip: {ruta_zip}"
+
+    try:
+        with zipfile.ZipFile(ruta_zip, 'r') as zf:
+            # Leer metadata
+            if "metadata.json" not in zf.namelist():
+                return "❌ Archivo .mcp-zip inválido (sin metadata.json)"
+
+            metadata = json.loads(zf.read("metadata.json"))
+            nombre = metadata["nombre"]
+
+            # Crear proyecto
+            crear_proyecto(nombre)
+
+            # Extraer archivos
+            zf.extractall(config.proyecto_dir(nombre))
+
+            # Reconstruir SQLite
+            motor = MotorBusqueda(nombre)
+            for tipo in ["errores", "decisiones", "implementacion", "plan"]:
+                entradas = leer_entradas(nombre, tipo)
+                for entrada in entradas:
+                    motor.indexar_entrada(entrada)
+
+            total = motor.estadisticas()["total"]
+            return f"📥 Proyecto '{nombre}' importado ({len(metadata['archivos'])} archivos, {total} entradas)"
+
+    except Exception as e:
+        return f"❌ Error importando: {e}"
+
+
+def memoria_listar_zip(ruta_zip: str) -> str:
+    """Lista el contenido de un archivo .mcp-zip.
+
+    Args:
+        ruta_zip: Ruta al archivo .mcp-zip
+
+    Returns:
+        Contenido del archivo .mcp-zip
+    """
+    import zipfile
+
+    ruta = Path(ruta_zip)
+    if not ruta.exists():
+        return f"❌ Archivo no encontrado: {ruta_zip}"
+
+    try:
+        with zipfile.ZipFile(ruta_zip, 'r') as zf:
+            # Leer metadata
+            metadata = {}
+            if "metadata.json" in zf.namelist():
+                metadata = json.loads(zf.read("metadata.json"))
+
+            nombre = metadata.get("nombre", "desconocido")
+            fecha = metadata.get("fecha_exportacion", "?")
+
+            salida = f"📋 **Contenido de {Path(ruta_zip).name}:**\n\n"
+            salida += f"- Proyecto: {nombre}\n"
+            salida += f"- Exportado: {fecha}\n\n"
+
+            # Listar archivos por tamaño
+            archivos = []
+            for info in zf.infolist():
+                if info.filename != "metadata.json":
+                    archivos.append((info.filename, info.file_size))
+
+            archivos.sort(key=lambda x: x[0])
+            for archivo, tamanho in archivos:
+                tamanho_kb = tamanho // 1024
+                salida += f"  {archivo} ({tamanho_kb} KB)\n"
+
+            return salida
+
+    except Exception as e:
+        return f"❌ Error leyendo: {e}"

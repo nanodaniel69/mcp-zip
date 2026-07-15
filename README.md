@@ -133,6 +133,11 @@ Agrega en `.cursor/mcp.json`:
 | `memoria_archivar` | Archiva entradas >30 días en bóveda | ~50 |
 | `memoria_importar` | Migra .md existentes al sistema | ~200 |
 | `memoria_exportar` | Exporta archivo de memoria | variable |
+| `memoria_estadisticas` | Métricas de uso y ahorro de tokens | ~300 |
+| `memoria_sincronizar` | Sync JSON + SQLite de todos los proyectos | ~500 |
+| `memoria_exportar_zip` | Exporta proyecto a formato .mcp-zip | ~200 |
+| `memoria_importar_zip` | Importa proyecto desde .mcp-zip | ~300 |
+| `memoria_listar_zip` | Lista contenido de un .mcp-zip | ~100 |
 
 ## Flujo Óptimo (Ahorra Tokens)
 
@@ -228,6 +233,47 @@ memoria_importar("ferreteria", "/home/user/proyectos/ferreteria/context/")
 | Variable | Descripción | Default |
 |----------|-------------|---------|
 | `MEMORIA_ROOT` | Directorio raíz de almacenamiento | `~/.memoria` |
+
+## Formato .mcp-zip
+
+Formato comprimido para exportar/importar proyectos completos:
+
+```bash
+# Exportar proyecto
+memoria_exportar_zip("ferreteria")
+→ 📦 ferreteria.mcp-zip (24.5 KB → 8.2 KB comprimido)
+
+# Importar proyecto
+memoria_importar_zip("/backup/ferreteria.mcp-zip")
+→ 📥 Proyecto 'ferreteria' importado (47 entradas)
+
+# Listar contenido
+memoria_listar_zip("ferreteria.mcp-zip")
+→ 📋 Contenido:
+   - errores.md (12 KB)
+   - errores.json (8 KB)
+   - decisiones.md (18 KB)
+   - ...
+```
+
+## Estadísticas
+
+```bash
+memoria_estadisticas("ferreteria")
+→ 📊 Estadísticas:
+   - Entradas: 47 (23 bugs, 15 decisiones, 9 planes)
+   - Activas: 31 | Archivadas: 16
+   - 💰 Ahorro: 93% (46,500 tokens/sesión)
+```
+
+## Sincronización
+
+```bash
+memoria_sincronizar()
+→ 🔄 Sincronizando todos los proyectos...
+   - ferreteria: ✅ JSON + SQLite reconstruido
+   - matucho: ✅ JSON + SQLite reconstruido
+```
 
 ## Stats del Proyecto
 
