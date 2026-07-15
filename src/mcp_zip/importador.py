@@ -63,6 +63,10 @@ def importar_desde_contexto(nombre: str, ruta_contexto: str) -> dict:
         except Exception as e:
             stats["errores"].append(f"Error importando {archivo.name}: {str(e)}")
 
+    # Sincronizar JSON final para todos los tipos importados
+    from .almacenamiento_json import sincronizar_todos
+    sincronizar_todos(nombre)
+
     return stats
 
 

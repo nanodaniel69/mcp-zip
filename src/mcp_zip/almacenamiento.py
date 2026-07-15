@@ -1,6 +1,7 @@
 """Almacenamiento de archivos .md y gestión de proyectos."""
 
 import os
+import json
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -113,7 +114,7 @@ def escribir_archivo(nombre: str, tipo_archivo: str, contenido: str) -> Path:
 
 
 def agregar_entrada(nombre: str, tipo_archivo: str, entrada: Entrada) -> Path:
-    """Agrega una entrada formateada a un archivo."""
+    """Agrega una entrada formateada a un archivo .md + .json."""
     if tipo_archivo in ARCHIVOS_ESTANDAR:
         filename = ARCHIVOS_ESTANDAR[tipo_archivo]
     else:
@@ -134,6 +135,11 @@ def agregar_entrada(nombre: str, tipo_archivo: str, entrada: Entrada) -> Path:
         contenido = f"# {tipo_archivo.upper()} — {nombre}\n\n{linea_entrada}\n"
 
     filepath.write_text(contenido, encoding=config.encoding)
+
+    # Sincronizar JSON secundario
+    from .almacenamiento_json import agregar_entrada_json
+    agregar_entrada_json(nombre, tipo_archivo, entrada)
+
     return filepath
 
 
@@ -192,6 +198,25 @@ def mover_a_boveda(nombre: str, tipo_archivo: str, entrada_id: str) -> bool:
 
     filepath = config.proyecto_dir(nombre) / ARCHIVOS_ESTANDAR.get(tipo_archivo, tipo_archivo)
     filepath.write_text(archivocontenido, encoding=config.encoding)
+
+    # Sincronizar JSON: eliminar entrada del JSON activo
+    from .almacenamiento_json import eliminar_entrada_json, agregar_entrada_json, entrada_a_dict
+    eliminar_entrada_json(nombre, tipo_archivo, entrada_id)
+
+    # Agregar a JSON de bóveda
+    boveda_json = f"{tipo_archivo}-{mes}.json"
+    boveda_json_path = config.boveda_dir(nombre) / boveda_json
+    entradas_boveda = []
+    if boveda_json_path.exists():
+        try:
+            entradas_boveda = json.loads(boveda_json_path.read_text(encoding=config.encoding))
+        except (json.JSONDecodeError, TypeError):
+            pass
+    entradas_boveda.append(entrada_a_dict(entrada_obj))
+    boveda_json_path.write_text(
+        json.dumps(entradas_boveda, ensure_ascii=False, indent=2),
+        encoding=config.encoding,
+    )
 
 
 def _actualizar_archivado_sqlite(nombre: str, entrada_id: str, archivado: bool, fecha_archivado: str):
