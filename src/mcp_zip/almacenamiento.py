@@ -164,6 +164,9 @@ def mover_a_boveda(nombre: str, tipo_archivo: str, entrada_id: str) -> bool:
     entrada_obj.archivado = True
     entrada_obj.fecha_archivado = datetime.now().strftime(config.formato_fecha)
 
+    # Actualizar SQLite para que la búsqueda refleje el archivado
+    _actualizar_archivado_sqlite(nombre, entrada_id, True, entrada_obj.fecha_archivado)
+
     # Escribir en bóveda
     mes = datetime.now().strftime("%Y-%m")
     boveda_filename = f"{tipo_archivo}-{mes}.md"
@@ -189,5 +192,18 @@ def mover_a_boveda(nombre: str, tipo_archivo: str, entrada_id: str) -> bool:
 
     filepath = config.proyecto_dir(nombre) / ARCHIVOS_ESTANDAR.get(tipo_archivo, tipo_archivo)
     filepath.write_text(archivocontenido, encoding=config.encoding)
+
+
+def _actualizar_archivado_sqlite(nombre: str, entrada_id: str, archivado: bool, fecha_archivado: str):
+    """Actualiza el estado de archivado en SQLite."""
+    import sqlite3
+    db_path = config.db_path(nombre)
+    if not db_path.exists():
+        return
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            "UPDATE entradas SET archivado = ?, fecha_archivado = ? WHERE id = ?",
+            (1 if archivado else 0, fecha_archivado, entrada_id),
+        )
 
     return True

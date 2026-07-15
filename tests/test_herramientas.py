@@ -80,3 +80,79 @@ def test_memoria_listar():
     resultado = memoria_listar()
     assert "proyecto-1" in resultado
     assert "proyecto-2" in resultado
+
+
+def test_contenido_con_espacios_se_preserva():
+    """Test que contenido con espacios sobrevive al ciclo indexar→buscar."""
+    memoria_iniciar("test-espacios")
+    memoria_escribir(
+        nombre="test-espacios",
+        tipo="bug",
+        titulo="Color detection falla",
+        contexto="Pinturas Tekbond y Miura se fusionan al detectar",
+        causa_raiz="paso 8 parser FGP, result.attributes sobreescribe",
+        solucion="Cambiar a spread de attributes en parser FGP",
+        etiquetas="parser,fgp,colores,pinturas",
+    )
+
+    # Buscar por contenido que tiene espacios
+    resultado = memoria_buscar("test-espacios", "Tekbond")
+    assert "Tekbond" in resultado
+
+    # Buscar por causa raíz
+    resultado2 = memoria_buscar("test-espacios", "sobreescribe")
+    assert "sobreescribe" in resultado2
+
+    # Verificar que el contexto completo se preserva
+    resultado3 = memoria_buscar("test-espacios", "fusionan detectar")
+    assert "fusionan" in resultado3
+
+
+def test_contenido_multiples_campos():
+    """Test que múltiples campos de contenido se preservan correctamente."""
+    memoria_iniciar("test-multi")
+    memoria_escribir(
+        nombre="test-multi",
+        tipo="decision",
+        titulo="Usar SQLite como store",
+        contexto="Necesitamos búsqueda rápida",
+        decision="SQLite FTS5",
+        rationale="Viene con Python, zero dependencias",
+        impacto="Reduce tokens en 98%",
+        etiquetas="sqlite,busqueda,optimizacion",
+    )
+
+    # Verificar que todos los campos son buscables
+    for termino in ["rápida", "FTS5", "dependencias", "98%"]:
+        resultado = memoria_buscar("test-multi", termino)
+        assert termino in resultado, f"No se encontró '{termino}' en resultados"
+
+
+def test_boveda_sincroniza_con_sqlite():
+    """Test que archivar sincroniza SQLite con los .md."""
+    memoria_iniciar("test-boveda")
+    memoria_escribir(
+        nombre="test-boveda",
+        tipo="bug",
+        titulo="Login falla con SSO",
+        contexto="Active Directory integration broken",
+        solucion="Fixed LDAP bind call",
+        etiquetas="auth,ldap,sso",
+        estado="resuelto",
+    )
+
+    # Antes de archivar: buscar solo activos lo encuentra
+    r1 = memoria_buscar("test-boveda", "LDAP", solo_activos=True)
+    assert "LDAP" in r1
+
+    # Archivar (dias=0 para archivar todo resuelto)
+    from mcp_zip.herramientas import memoria_archivar
+    memoria_archivar("test-boveda", dias=0)
+
+    # Después de archivar: solo activos NO lo encuentra
+    r2 = memoria_buscar("test-boveda", "LDAP", solo_activos=True)
+    assert "Login falla" not in r2, f"Bug bóveda: entrada archivada aparece en solo_activos: {r2}"
+
+    # Sin filtro: sigue encontrándolo (en la bóveda)
+    r3 = memoria_buscar("test-boveda", "LDAP")
+    assert "LDAP" in r3

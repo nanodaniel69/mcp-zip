@@ -1,6 +1,7 @@
 """Motor de búsqueda con SQLite FTS5."""
 
 import sqlite3
+import json
 import re
 from pathlib import Path
 from typing import Optional
@@ -87,7 +88,7 @@ class MotorBusqueda:
 
     def indexar_entrada(self, entrada: Entrada):
         """Indexa una entrada en la base de datos."""
-        contenido_str = ' '.join(f"{k}: {v}" for k, v in entrada.contenido.items())
+        contenido_json = json.dumps(entrada.contenido, ensure_ascii=False)
         etiquetas_str = ','.join(entrada.etiquetas)
         archivos_str = ','.join(entrada.archivos_afectados)
 
@@ -103,7 +104,7 @@ class MotorBusqueda:
                 entrada.titulo,
                 entrada.fecha,
                 entrada.estado,
-                contenido_str,
+                contenido_json,
                 etiquetas_str,
                 archivos_str,
                 entrada.proyecto,
@@ -212,12 +213,17 @@ class MotorBusqueda:
         }
 
     def _parsear_contenido(self, contenido_str: str) -> dict:
-        """Parsea el contenido de texto a diccionario."""
+        """Parsea el contenido JSON a diccionario."""
         if not contenido_str:
             return {}
-        resultado = {}
-        for parte in contenido_str.split(' '):
-            if ':' in parte:
-                clave, valor = parte.split(':', 1)
-                resultado[clave] = valor
-        return resultado
+        try:
+            return json.loads(contenido_str)
+        except (json.JSONDecodeError, TypeError):
+            # Fallback: contenido en formato legacy "clave: valor"
+            resultado = {}
+            for linea in contenido_str.split('\n'):
+                linea = linea.strip()
+                if ':' in linea:
+                    clave, valor = linea.split(':', 1)
+                    resultado[clave.strip()] = valor.strip()
+            return resultado
