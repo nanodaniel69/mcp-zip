@@ -14,7 +14,46 @@ Tu agente de IA olvida todo cada vez que termina una sesión. Para recordar, tie
 
 ## La Solución
 
-**mcp-zip** comprime la memoria del agente en archivos `.md` compactos, optimizados para consumo de LLMs. Con búsqueda FTS5, tu agente encuentra lo relevante en milisegundos sin leer archivos completos.
+**mcp-zip** comprime la memoria del agente en archivos `.md` compactos, optimizados para consumo de LLMs. Con búsqueda FTS5 + TF-IDF, tu agente encuentra lo relevante en milisegundos sin leer archivos completos.
+
+## Arquitectura
+
+```
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│  .md files   │────▶│  .json cache │────▶│  SQLite      │
+│  (store)     │     │  (estructura)│     │  (índice)    │
+│  git-friendly│     │  parseo rápido│    │  FTS5+TF-IDF │
+└──────────────┘     └──────────────┘     └──────────────┘
+       │                    │                    │
+       ▼                    ▼                    ▼
+  Humanos leen       APIs acceden        Agente busca
+  y commitean        programátic.        instantáneo
+```
+
+### Flujo de Trabajo
+
+```
+INICIAR SESIÓN:
+  memoria_iniciar("ferreteria")
+  → Auto-archiva entradas >30 días
+  → ✅ Proyecto activo
+
+ESCRIBIR:
+  memoria_escribir("ferreteria", "bug", "Color falla", ...)
+  → Guarda en .md (git)
+  → Genera .json (cache)
+  → Indexa en SQLite (búsqueda)
+
+BUSCAR:
+  memoria_buscar("ferreteria", "color detection")
+  → SQLite FTS5 + TF-IDF busca (~700 tokens)
+  → Devuelve solo entradas relevantes
+
+LEER:
+  memoria_leer("ferreteria", "resumen")
+  → Lee .md completo (~500 tokens)
+  → Solo para contexto general
+```
 
 ## Instalación
 
@@ -83,43 +122,44 @@ Agrega en `.cursor/mcp.json`:
 
 ## Herramientas
 
-| Herramienta | Descripción |
-|-------------|-------------|
-| `memoria_iniciar` | Crea un proyecto nuevo con estructura de memoria |
-| `memoria_escribir` | Registra una entrada (bug, decisión, implementación, plan) |
-| `memoria_buscar` | Busca entradas por texto completo con ranking FTS5 |
-| `memoria_leer` | Lee un archivo de memoria completo |
-| `memoria_resumen` | Resumen compacto del estado del proyecto |
-| `memoria_listar` | Lista todos los proyectos |
-| `memoria_archivar` | Archiva entradas resueltas antiguas en bóveda |
-| `memoria_importar` | Migra archivos .md existentes al sistema |
-| `memoria_exportar` | Exporta un archivo de memoria |
+| Herramienta | Descripción | Tokens |
+|-------------|-------------|--------|
+| `memoria_iniciar` | Crea/reactiva proyecto + auto-archiva | ~50 |
+| `memoria_escribir` | Registra entrada (bug, decisión, plan) | ~100 |
+| `memoria_buscar` | Búsqueda semántica FTS5 + TF-IDF | ~700 |
+| `memoria_leer` | Lee archivo completo | ~500-5000 |
+| `memoria_resumen` | Resumen compacto del estado | ~500 |
+| `memoria_listar` | Lista todos los proyectos | ~100 |
+| `memoria_archivar` | Archiva entradas >30 días en bóveda | ~50 |
+| `memoria_importar` | Migra .md existentes al sistema | ~200 |
+| `memoria_exportar` | Exporta archivo de memoria | variable |
 
-## Ejemplo de Uso
+## Flujo Óptimo (Ahorra Tokens)
+
+### ❌ Mal (consume ~50,000 tokens/sesión)
 
 ```
-Usuario: "Creá el proyecto ferreteria con stack Next.js + Prisma"
-
-Agente llama memoria_iniciar("ferreteria", "Next.js + Prisma")
-→ ✅ Proyecto 'ferreteria' inicializado en ~/.memoria/proyectos/ferreteria/
-
-Usuario: "Anotá que el bug del color detection se resolvió"
-
-Agente llama memoria_escribir("ferreteria", "bug", "Color detection falla",
-    contexto="Pinturas Tekbond/Miura se fusionan",
-    solucion="Spread de attributes en parser FGP",
-    etiquetas="parser,fgp,colores")
-→ ✅ Entrada 'bug-2026-07-14-color-detection-falla' registrada en errores.md
-
-Usuario: "¿Qué errores tiene ferreteria?"
-
-Agente llama memoria_buscar("ferreteria", "color detection")
-→ 🔍 1 resultado para 'color detection' en 'ferreteria':
-   1. Color detection falla (bug | 2026-07-14 | resuelto)
-      ctx: Pinturas Tekbond/Miura se fusionan
-      fix: Spread de attributes en parser FGP
-      tags: parser,fgp,colores
+# Leer TODO el contexto cada vez
+memoria_leer("ferreteria", "errores")      # 3,716 tokens
+memoria_leer("ferreteria", "decisiones")    # 5,901 tokens
+memoria_leer("ferreteria", "implementacion") # 2,862 tokens
 ```
+
+### ✅ Bien (consume ~3,500 tokens/sesión)
+
+```
+# Resumen general
+memoria_resumen("ferreteria")              # 500 tokens
+
+# Búsqueda específica
+memoria_buscar("ferreteria", "parser")     # 700 tokens
+memoria_buscar("ferreteria", "color")      # 700 tokens
+
+# Lectura solo si es necesario
+memoria_leer("ferreteria", "resumen")      # 500 tokens
+```
+
+**Ahorro: 93% de tokens por sesión.**
 
 ## Formato Compacto
 
@@ -148,17 +188,29 @@ files: src/services/normalization/parsers/fgp.parser.ts
 
 ## Bóveda de Archivado
 
-Las entradas resueltas con más de 30 días se archivan automáticamente en la bóveda:
+Las entradas resueltas con más de 30 días se archivan automáticamente al iniciar sesión:
 
 ```
 ~/.memoria/proyectos/ferreteria/
 ├── errores.md          ← Entradas activas
+├── errores.json        ← Cache estructurado
 ├── decisiones.md       ← Entradas activas
-├── boveda/
-│   ├── errores-2026-06.md      ← Archivados de junio
-│   └── decisiones-2026-06.md   ← Archivados de junio
-└── memoria.db           ← Índice FTS5
+├── decisiones.json     ← Cache estructurado
+├── memoria.db          ← Índice FTS5 + TF-IDF
+└── boveda/
+    ├── errores-2026-06.md      ← Archivados de junio
+    ├── errores-2026-06.json    ← Cache de archivados
+    ├── decisiones-2026-06.md
+    └── decisiones-2026-06.json
 ```
+
+## Stores de Almacenamiento
+
+| Store | Formato | Para Qué | Quién lo Lee |
+|-------|---------|----------|--------------|
+| `.md` | Markdown compacto | Git, humanos, backup | Cualquiera |
+| `.json` | JSON estructurado | Acceso programático | Python, APIs |
+| `.db` | SQLite FTS5 + TF-IDF | Búsqueda instantánea | Motor de búsqueda |
 
 ## Migración
 
@@ -168,6 +220,7 @@ Si ya tenés archivos `.md` de contexto existentes:
 # El agente llama:
 memoria_importar("ferreteria", "/home/user/proyectos/ferreteria/context/")
 → 📥 Importación completada: 5 archivos, 23 entradas
+→ 📄 JSON sincronizado automáticamente
 ```
 
 ## Variables de Entorno
@@ -175,6 +228,16 @@ memoria_importar("ferreteria", "/home/user/proyectos/ferreteria/context/")
 | Variable | Descripción | Default |
 |----------|-------------|---------|
 | `MEMORIA_ROOT` | Directorio raíz de almacenamiento | `~/.memoria` |
+
+## Stats del Proyecto
+
+```
+Líneas de código:  ~2,200
+Tests:             35/35 ✅
+Dependencias:      2 (fastmcp, pyyaml)
+Formato:           .md + .json + SQLite
+Búsqueda:          FTS5 + TF-IDF (sin ML)
+```
 
 ## Licencia
 

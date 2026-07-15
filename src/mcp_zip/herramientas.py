@@ -17,20 +17,50 @@ from .importador import importar_desde_contexto
 
 
 def memoria_iniciar(nombre: str, stack: str = "") -> str:
-    """Crea un proyecto nuevo con la estructura de memoria.
+    """Crea o reactiva un proyecto con auto-archivado.
+
+    Al iniciar sesión, archiva automáticamente entradas resueltas
+    con más de 30 días para mantener los archivos .md livianos.
 
     Args:
         nombre: Nombre del proyecto (ej: "ferreteria")
         stack: Stack tecnológico opcional (ej: "Next.js + Prisma")
 
     Returns:
-        Mensaje de confirmación con la ruta del proyecto
+        Mensaje de confirmación con estado del proyecto
     """
     if proyecto_existe(nombre):
-        return f"⚠️ Proyecto '{nombre}' ya existe. Usá memoria_leer o memoria_buscar."
+        # Auto-archivar entradas viejas al iniciar sesión
+        archivadas = _auto_archivar(nombre)
+        msg_archivado = f" 📦 {archivadas} entradas archivadas." if archivadas > 0 else ""
+        return f"✅ Proyecto '{nombre}' activo.{msg_archivado} Usá memoria_buscar o memoria_escribir."
 
     crear_proyecto(nombre, stack)
     return f"✅ Proyecto '{nombre}' inicializado en ~/.memoria/proyectos/{nombre}/"
+
+
+def _auto_archivar(nombre: str, dias: int = 30) -> int:
+    """Archiva automáticamente entradas resueltas antiguas.
+
+    Returns:
+        Cantidad de entradas archivadas
+    """
+    from datetime import datetime, timedelta
+    from .almacenamiento import leer_entradas, mover_a_boveda
+
+    archivadas = 0
+    for tipo_archivo in ["errores", "decisiones"]:
+        entradas = leer_entradas(nombre, tipo_archivo)
+        for entrada in entradas:
+            if entrada.estado == "resuelto" and not entrada.archivado:
+                try:
+                    fecha_entrada = datetime.strptime(entrada.fecha, "%Y-%m-%d")
+                    if (datetime.now() - fecha_entrada).days >= dias:
+                        mover_a_boveda(nombre, tipo_archivo, entrada.id)
+                        archivadas += 1
+                except ValueError:
+                    continue
+    return archivadas
 
 
 def memoria_escribir(

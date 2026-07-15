@@ -30,10 +30,11 @@ def test_memoria_iniciar():
 
 
 def test_memoria_iniciar_duplicado():
-    """Test que no se crea proyecto duplicado."""
+    """Test que iniciar proyecto existente activa auto-archivado."""
     memoria_iniciar("test-proyecto")
     resultado = memoria_iniciar("test-proyecto")
-    assert "⚠️" in resultado
+    assert "✅" in resultado
+    assert "activo" in resultado
 
 
 def test_memoria_escribir():
