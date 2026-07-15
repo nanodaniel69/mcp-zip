@@ -1,4 +1,4 @@
-"""Motor de búsqueda con SQLite FTS5."""
+"""Motor de búsqueda con SQLite FTS5 + TF-IDF."""
 
 import sqlite3
 import json
@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from .configuracion import config
 from .formateador import Entrada
+from .tfidf import MotorTFIDF, texto_entrada_compacto, tokenizar
 
 
 @dataclass
@@ -20,12 +21,20 @@ class ResultadoBusqueda:
 
 
 class MotorBusqueda:
-    """Motor de búsqueda con SQLite FTS5."""
+    """Motor de búsqueda con SQLite FTS5 + TF-IDF.
+
+    Arquitectura híbrida:
+    - FTS5: retrieval rápido por texto completo
+    - TF-IDF: re-ranking por relevancia semántica
+    - Combinación: 60% TF-IDF + 40% FTS5
+    """
 
     def __init__(self, proyecto: str):
         self.proyecto = proyecto
         self.db_path = config.db_path(proyecto)
+        self.tfidf = MotorTFIDF()
         self._init_db()
+        self._reconstruir_tfidf()
 
     def _init_db(self):
         """Inicializa la base de datos SQLite con FTS5."""
@@ -87,7 +96,7 @@ class MotorBusqueda:
             """)
 
     def indexar_entrada(self, entrada: Entrada):
-        """Indexa una entrada en la base de datos."""
+        """Indexa una entrada en la base de datos y reconstruye TF-IDF."""
         contenido_json = json.dumps(entrada.contenido, ensure_ascii=False)
         etiquetas_str = ','.join(entrada.etiquetas)
         archivos_str = ','.join(entrada.archivos_afectados)
@@ -112,8 +121,37 @@ class MotorBusqueda:
                 entrada.fecha_archivado,
             ))
 
+        # Reconstruir índice TF-IDF después de cada indexación
+        self._reconstruir_tfidf()
+
+    def _reconstruir_tfidf(self):
+        """Reconstruye el índice TF-IDF desde todas las entradas."""
+        textos = []
+        with sqlite3.connect(str(self.db_path)) as conn:
+            rows = conn.execute(
+                "SELECT titulo, contenido, etiquetas FROM entradas"
+            ).fetchall()
+            for titulo, contenido, etiquetas in rows:
+                # Reconstruir dict para texto_entrada_compacto
+                contenido_dict = {}
+                try:
+                    contenido_dict = json.loads(contenido) if contenido else {}
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+                etiquetas_list = etiquetas.split(',') if etiquetas else []
+                texto = texto_entrada_compacto({
+                    "titulo": titulo,
+                    "contenido": contenido_dict,
+                    "etiquetas": etiquetas_list,
+                })
+                textos.append(texto)
+
+        if textos:
+            self.tfidf.construir_idf(textos)
+
     def buscar(self, query: str, solo_activos: bool = False, limite: int = 5) -> list[ResultadoBusqueda]:
-        """Busca entradas por texto completo con ranking FTS5."""
+        """Busca entradas con FTS5 + re-ranking TF-IDF."""
         # Limpiar query para FTS5
         query_limpia = re.sub(r'[^\w\s]', ' ', query)
         query_fts = ' OR '.join(query_limpia.split())
@@ -121,10 +159,12 @@ class MotorBusqueda:
         if not query_fts:
             return []
 
-        resultados = []
+        candidatos = []  # (id, texto_completo, fts5_score)
+        resultados_brutos = []  # Para reconstruir entradas después
 
         with sqlite3.connect(str(self.db_path)) as conn:
-            # Buscar en FTS5
+            # Buscar en FTS5 — traemos más candidatos para re-ranking
+            limite_fts = limite * 3  # 3x para tener margen de re-ranking
             sql = """
                 SELECT e.id, e.tipo, e.titulo, e.fecha, e.estado,
                        e.contenido, e.etiquetas, e.archivos_afectados,
@@ -140,12 +180,12 @@ class MotorBusqueda:
                 sql += " AND e.archivado = 0"
 
             sql += " ORDER BY rank LIMIT ?"
-            params.append(limite)
+            params.append(limite_fts)
 
             try:
                 rows = conn.execute(sql, params).fetchall()
             except sqlite3.OperationalError:
-                # Si FTS5 falla, buscar con LIKE
+                # Fallback: LIKE
                 sql_like = """
                     SELECT id, tipo, titulo, fecha, estado,
                            contenido, etiquetas, archivos_afectados,
@@ -155,13 +195,10 @@ class MotorBusqueda:
                 """
                 like_param = f"%{query}%"
                 params_like = [like_param, like_param, like_param]
-
                 if solo_activos:
                     sql_like += " AND archivado = 0"
-
                 sql_like += " LIMIT ?"
-                params_like.append(limite)
-
+                params_like.append(limite_fts)
                 rows = conn.execute(sql_like, params_like).fetchall()
 
             for row in rows:
@@ -178,14 +215,32 @@ class MotorBusqueda:
                     archivado=bool(row[8]),
                     fecha_archivado=row[9] or "",
                 )
-                score = abs(row[10]) if row[10] else 0
-                fuente = "boveda" if entrada.archivado else "activos"
+                fts5_score = abs(row[10]) if row[10] else 0
 
-                resultados.append(ResultadoBusqueda(
-                    entrada=entrada,
-                    score=score,
-                    fuente=fuente,
-                ))
+                # Texto plano para TF-IDF
+                texto = texto_entrada_compacto({
+                    "titulo": entrada.titulo,
+                    "contenido": entrada.contenido,
+                    "etiquetas": entrada.etiquetas,
+                })
+
+                candidatos.append((entrada.id, texto, fts5_score))
+                resultados_brutos.append((entrada, fts5_score))
+
+        # Re-ranking con TF-IDF
+        id_a_entrada = {e.id: (e, fs) for e, fs in resultados_brutos}
+        scores_rerankeados = self.tfidf.rerankear(query, candidatos)
+
+        # Construir resultados finales (limitados)
+        resultados = []
+        for eid, score_final in scores_rerankeados[:limite]:
+            entrada, _ = id_a_entrada[eid]
+            fuente = "boveda" if entrada.archivado else "activos"
+            resultados.append(ResultadoBusqueda(
+                entrada=entrada,
+                score=score_final,
+                fuente=fuente,
+            ))
 
         return resultados
 
